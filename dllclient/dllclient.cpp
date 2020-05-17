@@ -10,16 +10,19 @@
 #include <chrono> 
 #include"hjkUsbXferdll.h"
 using namespace std;
-void startXfer(void *);
+void xferToUSB(void *);
+void dataProduce(void*);
+
 int main()
 {
-    std::cout << "Hello World!\n";
-	
-	
+	//std::cout << "Data producing..." << endl;
+
+	//_beginthread(dataProduce, 0, NULL);
+	//std::cout << "Xfer  data to usb device...\n";
 	//初始化后启动传输线程
-	_beginthread(startXfer, 0, NULL);
+	_beginthread(xferToUSB, 0, NULL);
 	while (1);
-	/**********************/
+	/*********以下都是无用的测试*************/
 	int test1 = 0x12345678;
 	UCHAR *uct=(UCHAR *)malloc(4);
 	memcpy(uct, &test1, 4);
@@ -95,27 +98,44 @@ int main()
 		exit(1);
 	}
 }
-void startXfer(void *)
+void dataProduce(void*)
 {
 	int i = 0x70000000;
 	int dda = 0;
-	__int32 in[64];
-	__int32 out[512];	
+	double x = 0;
+	__int32 data[64];
+	std::cout << "Data producing and xfer data to usb device..." << endl;
 	while (1)
 	{
 		for (i = 0; i < 64; i++) {
-			in[i] = ++dda;
+			//in[i] = ++dda;
+			//in[i] = 0x7fffffff * sin(x += 0.01);//(sin(x)*0x7fffffff)
+			data[i] = 0x7fffffff;
 		}
-			
-		if (dda % 4194304 == 0)
-		{
-			cout << "dda = " << dda << ",time is " <<time(NULL)<< endl;
+		Sleep(1);
+	}
+}
+void xferToUSB(void *)
+{
+	int i = 0x70000000;
+	int dda = 0;
+	double x = 0;
+	__int32 in[64];
+	__int32 out[512];
+	std::cout << "Data producing and xfer data to usb device..." << endl;
+	while (1)
+	{
+		for (i = 0; i < 64; i++) {
+			//in[i] = ++dda;
+			//in[i] = 0x7fffffff * sin(x += 0.01);//(sin(x)*0x7fffffff)
+			in[i] = 0x7fffffff;
 		}
+		
 		queueBufStart(in, out,64,2048);
 		
-	 	Sleep(0.1);
+	 Sleep(1);
 	
-		//int x = out[0];
+		
 	}
 
 	

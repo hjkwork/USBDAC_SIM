@@ -155,7 +155,7 @@ bool isEmpty() const
         ret = !_numElements;
     }
     RB_ATOMIC_END
-
+    
     return ret;
 }
 

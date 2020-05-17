@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "HjkDataFormat.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 
 
@@ -64,22 +65,44 @@ UINT HjkDataFormat::waveDataFormat(qnodeChInt32 * inNode, qnodeChInt32 * midNode
 		}
 
 		//转置
-		transpositionInt(oddGroup, tem, DAC_BITS);
-		transpositionInt(evenGroup, tem + (inNode->datalen / 2), DAC_BITS);
+		transpositionInt(oddGroup, tem);
+		transpositionInt(evenGroup, tem + (inNode->datalen / 2));		
 	}
 
-
+	//outDataFormat_64CH(qnodeChInt32 * in, qnodeChInt32 * out, UCHAR bitWide)
+#ifdef DAC_24BIT
+	//  24位按字节填装，取高24位,小端格式中，将一组64个32位数据(0~63)去掉第24~31和56~63共16个32位数据即可.
+	size_x = (inNode->datalen - 16) * 4;
 	//处理后检测index，不能超过midNode的datalen
-	if (index + size_x <= (midNode->datalen*4) )
+	if(index + size_x <= (midNode->datalen * 4))
+	{
+
 		//将处理结果写入从index位置开始的midNode中
-		memcpy(midNode->data + (index/4), tem, size_x);
+		memcpy(midNode->data + (index / 4), tem, 24 * 4);
+		memcpy(midNode->data + (index / 4) + 24, tem + 32, 24 * 4);
+	}
+		
 	else
 	{
 		//printf("SERROR:out of the len of midNode's data.\n");
 		return NULL;
 	}
+	
+#else
 
-	return size_x;
+	//处理后检测index，不能超过midNode的datalen
+	if (index + size_x <= (midNode->datalen * 4))
+		//将处理结果写入从index位置开始的midNode中
+		memcpy(midNode->data + (index / 4), tem, size_x);
+	else
+	{
+		//printf("SERROR:out of the len of midNode's data.\n");
+		return NULL;
+	}
+	
+#endif // DAC_24BIT
+return size_x;
+	
 }
 
 UINT HjkDataFormat::waveDataFormat(QUEUE_NODE_A * inNode, QUEUE_NODE_B * midNode, UINT index)
@@ -102,12 +125,14 @@ UINT HjkDataFormat::waveDataFormat(QUEUE_NODE_A * inNode, QUEUE_NODE_B * midNode
 
 	return size_x;
 }
+
 //转置方法
 	//参数分别为输入数组、输出数组、有效位数（DAC位数,本工程为24bit）
 	//函数为固定的32位转置，
-UINT HjkDataFormat::transpositionInt(__int32 *in, __int32 *out, char bitWide)
+UINT HjkDataFormat::transpositionInt(__int32 *in, __int32 *out)
 {
-	unsigned __int32 padBit = 0x01 << (bitWide - 1);//有效位的最高位取1
+	//unsigned __int32 padBit = 0x01 << (bitWide - 1);//有效位的最高位取1
+	unsigned __int32 padBit = 0x01 << 31;//有效位的最高位取1
 	for (int i = 0; i < 32; i++)//32位无符号整型的转置输出，即32*4字节。
 	{
 		out[i] = 0;
@@ -120,4 +145,35 @@ UINT HjkDataFormat::transpositionInt(__int32 *in, __int32 *out, char bitWide)
 	}
 	return 0;
 
+}
+void HjkDataFormat::outDataFormat_64CH(qnodeChInt32* in, qnodeChInt32* out, UCHAR bitWide)
+{
+	if (in->datalen == 64)
+	{
+		switch (bitWide)
+		{
+		case 16:
+			printf("have not develop,exit\n");
+			exit(1);
+
+			break;
+		case 24:
+			//  24位按字节填装，取高24位,小端格式中，将一组64个32位数据(0~63)去掉第24~31和56~63共16个32位数据即可.
+			memcpy(out->data, in->data, 24 * 4);
+			memcpy(out->data + 24, in->data + 32, 24 * 4);		
+			break;
+		case 32:
+			break;
+		default:break;
+		}
+		
+	}
+	else
+	{
+		printf("Channel counts must be 64\n");
+		exit(1);
+	}
+		
+
+	
 }

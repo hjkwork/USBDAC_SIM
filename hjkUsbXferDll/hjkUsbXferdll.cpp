@@ -88,10 +88,10 @@ long  initHjkUSBXfer(string usbdevices, int ppx)
 				return 0;
 			}
 			//每次传输的字节数为xferlen，不超过4m bytes。
-			len = hjkBulkOutEndpt->MaxPktSize*ppx;
+			len = hjkBulkOutEndpt->MaxPktSize*ppx*3;
 			if (len > 0x400000)
 			{
-				len = 0x400000;
+				len = 4177920;
 			}
 			hjkBulkOutEndpt->SetXferSize(len);
 			return len;
@@ -205,10 +205,12 @@ void initQueueBuf(int ch, int outBytes)
 	else
 	{ 
 		//获取int型的数组地址，获取后才能入队
-		 WaitForSingleObject(dataInMutex, INFINITE);
+		// WaitForSingleObject(dataInMutex, INFINITE);
 		 inData = allChIn1;
+		
 		 nodeIn = (qnodeChInt32 *)inRQue.getHead();
 		 memcpy(nodeIn->data, inData, nodeIn->datalen * sizeOfInt32);
+		// ReleaseMutex(dataInMutex);
 		 if (!inRQue.add(*nodeIn, false))
 		 {
 			 cout << "Data in false." << endl;
@@ -217,9 +219,9 @@ void initQueueBuf(int ch, int outBytes)
 		//获取数据事件发生
 		//SetEvent(dataInEvent);
 		outIntBuf=out  ;
-		ReleaseMutex(dataInMutex);
+	
 		
-		//out[0] = 654321;
+		
 	}
 	
 }
@@ -273,11 +275,17 @@ void initQueueBuf(int ch, int outBytes)
 
 	while (1)
 	{
-		if (!inRQue.isEmpty() )
+		if (inRQue.isEmpty() )
 		{
+			//等待超时，输出debug信息等，时间太长USB设备进入省电模式等其他操作	
+
+		}
+		else
+		{
+			
 			//获取队头的节点，注意nodeOut可能的改变引起的不安全
-			if(index == 0)nodeOut = outRQue.getHead();
-			if (index < nodeOut->datalen*sizeOfInt32)
+			if (index == 0)nodeOut = outRQue.getHead();
+			if (index < nodeOut->datalen * sizeOfInt32)
 			{
 				inRQue.pull(nodeInbuf);//将队头的数据传入一个缓存
 
@@ -289,7 +297,7 @@ void initQueueBuf(int ch, int outBytes)
 
 
 			}
-			else if(index >= nodeOut->datalen*sizeOfInt32)////当tempMidNode中的数据满时，送入输出队列
+			else if (index >= nodeOut->datalen * sizeOfInt32)////当tempMidNode中的数据满时，送入输出队列
 			{
 				//索引重置
 				index = 0;
@@ -298,7 +306,7 @@ void initQueueBuf(int ch, int outBytes)
 				{
 					//写入时保护
 					outRQue.add(*nodeOut, false);
-					
+
 					//ReleaseSemaphore(midNode2OutQSem, 1, NULL);//传入队列后，信号量+1
 				}
 				else
@@ -310,27 +318,23 @@ void initQueueBuf(int ch, int outBytes)
 				}
 
 			}
-
-		}
-		else
-		{
-			//等待超时，输出debug信息等，时间太长USB设备进入省电模式等其他操作
 		}
 	}
 }
  void  testOut(void *)
  {
 
-	 int i = 0;
+	 int i = 0;	
 	 while (1)
 	 {
 		 if (!outRQue.isEmpty())//队列非空就pull
 		 {
+			 /**/
 			 if (outRQue.pull(nodeOutbuf))
-			 {
+			 {				
 				 //usb异步传输
 				 nodeOutbuf->context = hjkBulkOutEndpt->BeginDataXfer(
-					 (UCHAR *)nodeOutbuf->data, xferUSBDataSize, &nodeOutbuf->ovLap);
+				 (PUCHAR)nodeOutbuf->data, xferUSBDataSize, &nodeOutbuf->ovLap);
 				 if (hjkBulkOutEndpt->NtStatus || hjkBulkOutEndpt->UsbdStatus) // BeginDataXfer failed
 				 {
 					 //Display(String::Concat("Xfer request rejected. NTSTATUS = ", EndPt->NtStatus.ToString("x")));
