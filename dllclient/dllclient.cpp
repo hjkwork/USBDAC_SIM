@@ -122,6 +122,7 @@ void xferToUSB(void *)
 	double x = 0;
 	__int32 in[64];
 	__int32 out[512];
+//	startHjkUSBdevice()
 	std::cout << "Data producing and xfer data to usb device..." << endl;
 	while (1)
 	{

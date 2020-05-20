@@ -23,6 +23,7 @@ static qnodeChInt32								*nodeOutbuf;
 static __int32									*outIntBuf;
 static __int32* dataOfOutQueNodeOut;
 static __int32									*dataOfInQueNodeOut;
+static __int32* dataInbuf;
 static int										chNum;
 static bool										haveInit;
 static bool										isInFirst;
@@ -53,6 +54,17 @@ static CCyBulkEndPoint							*hjkBulkOutEndpt;
 static int xferIntNum;
 static long ppx;
 
+static PUCHAR* outBufs;
+static UINT outBufsLen;
+static UINT	outBufsIndex;
+static CCyIsoPktInfo** isoPktInfos;
+static PUCHAR* contexts;
+static OVERLAPPED* inOvLap;
+
+//通道缓存
+static __int32* mutiChsBuf;
+static __int32* oddSetBuf;
+static __int32* evenSetBuf;
 //调试相关
 int debugindex = 0;
 int t1, t2;
@@ -140,7 +152,7 @@ long  initHjkUSBXfer(string usbdevices, int chs)
 	//
 
 }
-void initQueueBuf(int ch, int outBytes)
+void initQueueBuf(int ch, int queueSize)
 {
 	haveInit = false;
 	chNum = ch;
@@ -189,30 +201,17 @@ void initQueueBuf(int ch, int outBytes)
 	inQIndex = 0;
 
 	//初始化输出
-	for (outQIndex = 0; outQIndex < OUT_RQUEUE_LEN; outQIndex++)
-	{
-		outNode[outQIndex].datalen = xferUSBDataSize /sizeOfInt32;
-		outNode[outQIndex].data = (__int32 *)malloc(xferUSBDataSize);
-		outNode[outQIndex].mutex = CreateMutex(NULL, false, NULL);
-		//usb异步I/O相关
-		outNode[outQIndex].ovLap.hEvent = CreateEvent(NULL, false, false, NULL);
-		
-		//outRQue.add(outNode[outQIndex]);
+	outBufsLen = queueSize;
+	outBufsIndex = 0;
+	outBufs = new PUCHAR[outBufsLen];
+	isoPktInfos = new CCyIsoPktInfo * [outBufsLen];
+	contexts = new PUCHAR[outBufsLen];
+	inOvLap = new OVERLAPPED[outBufsLen];
 	
-	}
-	outQIndex = 0;
-	for (int i = 0; i < OUT_RQUEUE_LEN; i++)
-	{
-		outBuf[i] = (UCHAR *)malloc(xferUSBDataSize);
-	}
-	dacDataBuf =(UCHAR*)malloc(xferUSBDataSize);
-	//同步相关
-	
-	dataInEvent = CreateEvent(NULL, false, false, NULL);
-	dataInMutex = CreateMutex(NULL, false, NULL);
-	//debug
-	xferIntNum = 0;
-	
+	mutiChsBuf = new __int32[chNum];
+	oddSetBuf = new __int32[chNum /2];
+	evenSetBuf = new __int32[chNum /2];
+
 
 	//_beginthread(testIn, 0, NULL);
 	_beginthread(testFormat, 0, NULL);
@@ -228,13 +227,18 @@ void initQueueBuf(int ch, int outBytes)
 //必须首先设置通道数
 //allChIn1是输入的地址，ch是出入到32位int数据的个数（一个节点的int个数），
 //out是输出地址，outBytes是输出（一个节点）的字节数
- void queueBufStart(__int32 *allChIn1,__int32 *out, int ch, int outBytes)
+ void queueBufStart(__int32 *allChIn1,__int32 *out, int ch, int outQueSize)
 {
+	 dataInbuf = allChIn1;
 	 if (!haveInit)
 	 {
-		initQueueBuf(ch, outBytes);
+		initQueueBuf(ch, outQueSize);
 		out[0] = 123456;//测试数据
 	 }
+	 
+
+
+
 	 //初始化输入节点数据
 	 if (isInFirst)
 	 {
@@ -571,44 +575,151 @@ void initQueueBuf(int ch, int outBytes)
 //输入为一次采样所有通道，且不用建立新的队列
 
  /*将输入队列中的数据处理后放入缓存*/
- /*
+
  void  toDacData(void*)
  {
 	 UINT index = 0;
-	 UINT x = 0;
-	 UINT bufCur = 0;
-	 //UCHAR toDacBuf[CHARS_PER_DAC24_GROUP];
-	 while (1)
+	 //填满队列
+	 for (outBufsIndex = 0; outBufsIndex < outBufsLen; outBufsIndex++)
 	 {
-		 
-		 
-		 if (!inRQue.isEmpty())
+		 outBufs[outBufsIndex] = new UCHAR[xferUSBDataSize];
+		 isoPktInfos[outBufsIndex] = new CCyIsoPktInfo[ppx];
+		 inOvLap[outBufsIndex].hEvent = CreateEvent(NULL, false, false, NULL);
+		 index = 0;
+
+		 while (index < xferUSBDataSize)//填满一次发送的数据
 		 {
-			  inRQue.pull(nodeInbuf);//将入队队头的数据传入一个缓存
-			  
-			  //处理数据
-			  			
-			  hjkdataf.waveDataFormat(nodeInbuf, &outBuf[index][bufCur]);
-			  bufCur += CHARS_PER_DAC24_GROUP;
-			  if (bufCur >= xferUSBDataSize)
-			  {
-				  xferBuf(outBuf[index]);
-				  bufCur = 0;				  
-				  index++;
-				  if (index == OUT_RQUEUE_LEN)
-					  index = 0;
-			  }
-			 
-		 }
-		 else
-		 {
-		//等待超时，输出debug信息等，时间太长USB设备进入省电模式等其他操作	
-			
-			
+			 hjkdataf.waveDataFormat(dataInbuf,mutiChsBuf,)
+			 memset(oddSetBuf, 0x00, chNum * 2);//设为0,大小为chNum/2*4
+			 memset(evenSetBuf, 0x00, chNum * 2);//设为0
+			 //将数据传入并分奇偶两组
+			 for (UCHAR i = 0; i < chCount; i++)
+			 {
+				 if (i % 2 == 0)
+					 oddGroup[i / 2] = chDataSourceGroup[i];
+				 else
+					 evenGroup[i / 2] = chDataSourceGroup[i];
+			 }
+
+			 //转置
+			 transpositionInt(oddGroup, outGroup, DAC_32BIT);
+			 transpositionInt(evenGroup, outGroup + 32, DAC_32BIT);
+			 //  24位按字节填装，取高24位
+			 for (UCHAR i = 0; i < 64; i++)
+			 {
+				 //小端,取高24位
+
+				 if (i < 24)
+					 memcpy(&(buffers[q][i * 4 + xferSize]), &(outGroup[i]), 4);
+				 if ((i > 31) && (i < 56))
+					 memcpy(&(buffers[q][(i - 8) * 4 + xferSize]), &(outGroup[i]), 4);
+				 /*
+				 //小端,取低24位
+				 if(（i > 7) && (i < 32))
+				 memcpy(&(buffers[q][(i-8)*4+xferSize]),&(outGroup[i]),4);
+				 if((i > 39) && (i < 64))
+				 memcpy(&(buffers[q][(i-16)*4+xferSize]),&(outGroup[i]),4);
+				 */
+			 }
+			 xferSize += 192;
 		 }
 	 }
+	 //第一次发送
+	 for (q = 0; q < queueSize; q++)
+	 {
+		 contexts[q] = EndPt->BeginDataXfer(buffers[q], len, &inOvLap[q]);
+		 if (EndPt->NtStatus || EndPt->UsbdStatus) // BeginDataXfer failed
+			 return 2;
+	 }
+
+	 q = 0;
+	 while (isXfer)
+	 {
+		 long rLen = len;	// Reset this each time through because
+			// FinishDataXfer may modify it
+
+		 if (!EndPt->WaitForXfer(&inOvLap[q], TimeOut))
+		 {
+			 EndPt->Abort();
+			 if (EndPt->LastError == ERROR_IO_PENDING)
+				 WaitForSingleObject(inOvLap[q].hEvent, 2000);
+		 }
+
+
+		 if (EndPt->Attributes == 1) // ISOC Endpoint
+		 {
+			 /*
+			  if (EndPt->FinishDataXfer(buffers[q], rLen, &inOvLap[q], contexts[q], isoPktInfos[q]))
+			  {
+				  CCyIsoPktInfo *pkts = isoPktInfos[q];
+
+			  }
+			  */
+		 }
+		 else // BULK Endpoint
+		 {
+
+			 if (!(EndPt->FinishDataXfer(buffers[q], rLen, &inOvLap[q], contexts[q])))
+				 return ;
+		 }
+
+
+		 // Re-submit this queue element to keep the queue full
+		 xferSize = 0;
+		 while (xferSize < len)//填满一次发送的数据
+		 {
+			 memset(oddGroup, 0x00, 32 * 4);//设为0
+			 memset(evenGroup, 0x00, 32 * 4);//设为0
+			 //将数据传入并分奇偶两组
+			 for (UCHAR i = 0; i < chCount; i++)
+			 {
+				 if (i % 2 == 0)
+					 oddGroup[i / 2] = chDataSourceGroup[i];
+				 else
+					 evenGroup[i / 2] = chDataSourceGroup[i];
+			 }
+
+			 //转置
+			 transpositionInt(oddGroup, outGroup, DAC_32BIT);
+			 transpositionInt(evenGroup, outGroup + 32, DAC_32BIT);
+			 //  24位按字节填装，取高24位
+			 for (UCHAR i = 0; i < 64; i++)
+			 {
+				 //小端,取高24位
+				 if (i < 24)
+					 memcpy(&(buffers[q][i * 4 + xferSize]), &(outGroup[i]), 4);
+				 if ((i > 31) && (i < 56))
+					 memcpy(&(buffers[q][(i - 8) * 4 + xferSize]), &(outGroup[i]), 4);
+			 }
+			 xferSize += 192;
+		 }
+
+
+		 if (debugindex == 0)
+			 t1 = GetTickCount();
+		 debugindex++;
+		 if (debugindex == 100)
+		 {
+			 t2 = GetTickCount();
+			 printf("Average time is %d ms per process.\n", (t2 - t1) / 100);
+			 debugindex = 0;
+			 sum = 0;
+
+		 }
+		 contexts[q] = EndPt->BeginDataXfer(buffers[q], len, &inOvLap[q]);
+		 if (EndPt->NtStatus || EndPt->UsbdStatus) // BeginDataXfer failed
+		 {
+			 //AbortXferLoop(QueueSize,buffers,isoPktInfos,contexts,inOvLap);
+			 return 4;
+		 }
+
+		 q++;
+
+		 if (q == queueSize) //
+			 q = 0;
+	 }
  }
- */
+
  bool xferBuf(PUCHAR buf)
  {
 	 if (hjkBulkOutEndpt->XferData(buf, xferUSBDataSize))
