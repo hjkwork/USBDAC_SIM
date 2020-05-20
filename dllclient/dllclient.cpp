@@ -133,7 +133,7 @@ void xferToUSB(void *)
 		
 		queueBufStart(in, out,64,2048);
 		
-	 Sleep(1);
+	// Sleep(1);
 	
 		
 	}

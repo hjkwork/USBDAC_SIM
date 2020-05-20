@@ -44,9 +44,11 @@
     #endif
 
 #else
+
 	#define HJKMUTEX					hjkMutex
     #define RB_ATOMIC_START WaitForSingleObject(HJKMUTEX, INFINITE);{
     #define RB_ATOMIC_END ReleaseMutex(HJKMUTEX);}
+    
  //   #warning "Operations on the buffer in ISRs are not safe!"
   //  #warning "Impliment RB_ATOMIC_START and RB_ATOMIC_END macros for safe ISR operation!"
 #endif

@@ -35,6 +35,7 @@ typedef struct NODE_INT32_ARR_
 	__int32		*data;
 	OVERLAPPED	ovLap;
 	UCHAR		*context;
+	HANDLE		mutex;
 } qnodeChInt32;
 typedef struct _QUEUE_NODE_A_
 {

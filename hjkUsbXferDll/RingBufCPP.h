@@ -10,6 +10,7 @@ public:
 
 RingBufCPP()
 {
+    HJKMUTEX = CreateMutex(NULL, false, NULL);
      RB_ATOMIC_START
      {         
 		 _numElements = 0;

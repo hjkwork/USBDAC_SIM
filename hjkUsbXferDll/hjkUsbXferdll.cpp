@@ -8,19 +8,28 @@
 #include "RingBufCPP.h"
 #include "hjkDataFormat.h"
 #include "HjkUSBDevice.h"
+
 // DLL internal state variables:
 static qnodeChInt32								inNode[IN_RQUEUE_LEN];
 static qnodeChInt32								outNode[OUT_RQUEUE_LEN];
 static RingBufCPP<qnodeChInt32, IN_RQUEUE_LEN>	inRQue;
 static RingBufCPP<qnodeChInt32, OUT_RQUEUE_LEN>	outRQue;
+static PUCHAR									*outBuf= new PUCHAR[OUT_RQUEUE_LEN];
 static qnodeChInt32								*nodeIn;
 static qnodeChInt32								*nodeOut;
-static qnodeChInt32								*nodeInbuf;
+static qnodeChInt32								*outQueNodeOut;
+static qnodeChInt32								*inQueNodeOut;
 static qnodeChInt32								*nodeOutbuf;
 static __int32									*outIntBuf;
-static __int32									*inData;
+static __int32* dataOfOutQueNodeOut;
+static __int32									*dataOfInQueNodeOut;
 static int										chNum;
 static bool										haveInit;
+static bool										isInFirst;
+static bool										isOutFirst;
+static bool										isXfer;
+
+static UCHAR* dacDataBuf;
 //需要初始化设置
 static UCHAR									sizeOfInt32;
 static int										MaxPktSize;
@@ -31,8 +40,10 @@ static HjkDataFormat							hjkdataf;
 //只有获取数据后，in线程才能入队，且入队之前，数据不能变，
 static HANDLE									dataInEvent;
 static HANDLE									dataInMutex;
+static HANDLE									outbufMutex = CreateMutex(NULL, false, NULL);
 //在填充一个节点的时候不能pull；
-static int										num;//计数
+static	UINT										inQIndex;//计数
+static	UINT										outQIndex;
 //usb相关
 static string									hjkUSBdevices;
 static HjkUSBDevice								hjkUSB;
@@ -40,6 +51,11 @@ static CCyBulkEndPoint							*hjkBulkOutEndpt;
 
 
 static int xferIntNum;
+static long ppx;
+
+//调试相关
+int debugindex = 0;
+int t1, t2;
 //static OVERLAPPED								hjkOutOvLap[OUT_RQUEUE_LEN];
 //static UCHAR									hjkOutContxt[OUT_RQUEUE_LEN];
 //函数声明
@@ -47,6 +63,12 @@ static int xferIntNum;
 void testIn(void *);
 void testFormat(void *);
 void testOut(void *);
+void toDacData(void*);
+void dacDataToOutQue(UCHAR* dacDataBuf);
+void dacDataToOutQueT(void*);
+bool xferOutBulkdataAsy(CCyBulkEndPoint* endPt, PUCHAR bufer, long xferSize, UCHAR* context, OVERLAPPED ovLap);
+bool xferBuf(PUCHAR buf);
+void debugThead(void*);
 void abortXfer(int pending);
 /*
 usb设备初始化操作
@@ -57,11 +79,12 @@ usb设备初始化操作
 设置端口和传输帧信息
 初始化完成返回
 */
-long  initHjkUSBXfer(string usbdevices, int ppx)
+long  initHjkUSBXfer(string usbdevices, int chs)
 {
 	
 	string endinfos;
 	long len ;
+	long ppx;
 	int slecd = -1;
 	int n = hjkUSB.getHjkUSBDevice(&usbdevices);
 	if (n > 0)
@@ -80,20 +103,26 @@ long  initHjkUSBXfer(string usbdevices, int ppx)
 		if (hjkUSB.USBDevice->Open(slecd))
 		{
 			//获取块端口，设置最大传输字节数
-			hjkBulkOutEndpt = hjkUSB.USBDevice->BulkOutEndPt;
+			hjkBulkOutEndpt = hjkUSB.USBDevice->BulkOutEndPt;			
 
 			if (hjkBulkOutEndpt == NULL)
 			{
 				cout << "The USB bulk end point is null, program exit." << endl;
 				return 0;
 			}
+			//清空重置端点
+			hjkBulkOutEndpt->Abort();
+			hjkBulkOutEndpt->Reset();
 			//每次传输的字节数为xferlen，不超过4m bytes。
-			len = hjkBulkOutEndpt->MaxPktSize*ppx*3;
+			ppx = chs * 3;
+			len = hjkBulkOutEndpt->MaxPktSize*ppx;
+			//len = 192 * 16;
 			if (len > 0x400000)
 			{
 				len = 4177920;
 			}
 			hjkBulkOutEndpt->SetXferSize(len);
+			
 			return len;
 		}
 		else
@@ -115,7 +144,7 @@ void initQueueBuf(int ch, int outBytes)
 {
 	haveInit = false;
 	chNum = ch;
-	inData = NULL;
+
 	sizeOfInt32 = sizeof(__int32);
 	//连接USB设置该值
 	
@@ -133,52 +162,52 @@ void initQueueBuf(int ch, int outBytes)
 
 	//2.初始化节点缓存
 	//*inNode = new qnodeChInt32;
-	nodeInbuf = new qnodeChInt32;
+	
+
+	inQueNodeOut = new qnodeChInt32;
+	inQueNodeOut->datalen = chNum;
+	dataOfInQueNodeOut = (__int32*)malloc(inQueNodeOut->datalen * sizeOfInt32);
+	inQueNodeOut->data = dataOfInQueNodeOut;
+
+	outQueNodeOut = new qnodeChInt32;
+	outQueNodeOut->datalen = xferUSBDataSize / sizeOfInt32;
+	dataOfOutQueNodeOut = (__int32*)malloc(outQueNodeOut->datalen * sizeOfInt32);
+	outQueNodeOut->data = dataOfOutQueNodeOut;
+
+
 	nodeOutbuf = new qnodeChInt32;
 
 
 	//1.初始化输入节点
-	for (int i = 0; i < IN_RQUEUE_LEN; i++)
+	for (inQIndex = 0; inQIndex < IN_RQUEUE_LEN; inQIndex++)
 	{
 		//datalen一般为通道数
-		inNode[i].datalen = chNum ;
-		inNode[i].data = (__int32 *)malloc(inNode[i].datalen*sizeOfInt32);
-		
-		//入队
-		inRQue.add(inNode[i]);
-		
+		inNode[inQIndex].datalen = chNum ;
+		inNode[inQIndex].data = (__int32 *)malloc(inNode[inQIndex].datalen*sizeOfInt32);
+		inNode[inQIndex].mutex = CreateMutex(NULL, false, NULL);		
 	}
-	//清空队列
-	for (int i = 0; i < IN_RQUEUE_LEN; i++)
-		inRQue.pull(nodeInbuf);
-	
-	
-	
-
-
-	
-	//outIntBuf = (__int32 *)malloc(MaxPktSize);
-
-	
-
+	inQIndex = 0;
 
 	//初始化输出
-	for (int i = 0; i < OUT_RQUEUE_LEN; i++)
+	for (outQIndex = 0; outQIndex < OUT_RQUEUE_LEN; outQIndex++)
 	{
-		outNode[i].datalen = xferUSBDataSize /sizeOfInt32;
-		outNode[i].data = (__int32 *)malloc(xferUSBDataSize);
-		//usb异步相关
-		outNode[i].ovLap.hEvent = CreateEvent(NULL, false, false, NULL);
+		outNode[outQIndex].datalen = xferUSBDataSize /sizeOfInt32;
+		outNode[outQIndex].data = (__int32 *)malloc(xferUSBDataSize);
+		outNode[outQIndex].mutex = CreateMutex(NULL, false, NULL);
+		//usb异步I/O相关
+		outNode[outQIndex].ovLap.hEvent = CreateEvent(NULL, false, false, NULL);
 		
-		outRQue.add(outNode[i]);
+		//outRQue.add(outNode[outQIndex]);
 	
 	}
-	for (int i = 0; i < OUT_RQUEUE_LEN; i++)	
-		outRQue.pull(nodeOutbuf);
-
-	
+	outQIndex = 0;
+	for (int i = 0; i < OUT_RQUEUE_LEN; i++)
+	{
+		outBuf[i] = (UCHAR *)malloc(xferUSBDataSize);
+	}
+	dacDataBuf =(UCHAR*)malloc(xferUSBDataSize);
 	//同步相关
-	num = 0;
+	
 	dataInEvent = CreateEvent(NULL, false, false, NULL);
 	dataInMutex = CreateMutex(NULL, false, NULL);
 	//debug
@@ -187,9 +216,14 @@ void initQueueBuf(int ch, int outBytes)
 
 	//_beginthread(testIn, 0, NULL);
 	_beginthread(testFormat, 0, NULL);
-	_beginthread(testOut, 0, NULL);
-
+	//_beginthread(dacDataToOutQueT, 0, NULL);
+	//_beginthread(testOut, 0, NULL);
+	
+	//_beginthread(debugThead, 0, NULL);
 	haveInit = true;
+	isInFirst = true;
+	isOutFirst = true;
+	isXfer = true;
 }
 //必须首先设置通道数
 //allChIn1是输入的地址，ch是出入到32位int数据的个数（一个节点的int个数），
@@ -201,26 +235,44 @@ void initQueueBuf(int ch, int outBytes)
 		initQueueBuf(ch, outBytes);
 		out[0] = 123456;//测试数据
 	 }
+	 //初始化输入节点数据
+	 if (isInFirst)
+	 {
+		memcpy(inNode[inQIndex].data, allChIn1, inNode[inQIndex].datalen * sizeOfInt32);
+		if (!inRQue.add(inNode[inQIndex], false))
+				printf("In queue first add node false.\n");
+		inQIndex++;
+		if (inQIndex == IN_RQUEUE_LEN)
+		{
+			inQIndex = 0;
+			isInFirst = false;
+		}
 		
-	else
+	 }
+	else 
 	{ 
 		//获取int型的数组地址，获取后才能入队
 		// WaitForSingleObject(dataInMutex, INFINITE);
-		 inData = allChIn1;
-		
-		 nodeIn = (qnodeChInt32 *)inRQue.getHead();
-		 memcpy(nodeIn->data, inData, nodeIn->datalen * sizeOfInt32);
-		// ReleaseMutex(dataInMutex);
-		 if (!inRQue.add(*nodeIn, false))
-		 {
-			 cout << "Data in false." << endl;
-			 //可不停到添加直到超时错误
-		 }
-		//获取数据事件发生
-		//SetEvent(dataInEvent);
-		outIntBuf=out  ;
-	
-		
+		//队列不满则插入，否则等待直到有队列不满		 
+		// while (isXfer)
+		// {
+			 while (inRQue.isFull());
+			 // WaitForSingleObject(inNode[inQIndex].mutex, INFINITE);
+			 memcpy(inNode[inQIndex].data, allChIn1, inNode[inQIndex].datalen * sizeOfInt32);
+			 if (inRQue.add(inNode[inQIndex], false))
+			 {
+				 inQIndex++;
+				 if (inQIndex == IN_RQUEUE_LEN)
+				 {
+					 inQIndex = 0;
+					 isInFirst = false;
+				 }
+
+
+			 }
+			 else printf("In queue add node false.\n");
+
+		// }
 		
 	}
 	
@@ -236,6 +288,7 @@ void initQueueBuf(int ch, int outBytes)
 		{
 			//WaitForSingleObject(dataInEvent, INFINITE);
 			//inRQue.pull(nodeIn);
+			/*
 			WaitForSingleObject(dataInMutex, INFINITE);
 			nodeIn = (qnodeChInt32 *)inRQue.getHead();
 			memcpy(nodeIn->data,inData,nodeIn->datalen * sizeOfInt32);
@@ -246,6 +299,7 @@ void initQueueBuf(int ch, int outBytes)
 				cout << "Data in false." << endl;
 			}
 			ReleaseMutex(dataInMutex);
+			*/
 			/*	
 			if (num < IN_RQUEUE_LEN)
 				num++;
@@ -271,114 +325,231 @@ void initQueueBuf(int ch, int outBytes)
 {
 	UINT index = 0;
 	UINT x = 0;
-
-
+	
 	while (1)
 	{
-		if (inRQue.isEmpty() )
+		if (!isInFirst)
 		{
-			//等待超时，输出debug信息等，时间太长USB设备进入省电模式等其他操作	
-
-		}
-		else
-		{
-			
-			//获取队头的节点，注意nodeOut可能的改变引起的不安全
-			if (index == 0)nodeOut = outRQue.getHead();
-			if (index < nodeOut->datalen * sizeOfInt32)
+			while (inRQue.isEmpty())
 			{
-				inRQue.pull(nodeInbuf);//将队头的数据传入一个缓存
-
-				//处理数据
-				//放入inNode，直到tempMidNode满,
-				index += hjkdataf.waveDataFormat(nodeInbuf, nodeOut, index);
-				//for (int i = 0; i < nodeOut->datalen; i += (sizeof(dacData)))
-				//	printf("out data is %d\n", *(dacData*)(nodeOut->data + index+i));
-
-
+				//等待超时，输出debug信息等，时间太长USB设备进入省电模式等其他操作	
 			}
-			else if (index >= nodeOut->datalen * sizeOfInt32)////当tempMidNode中的数据满时，送入输出队列
+			inRQue.pull(inQueNodeOut);
+			//因为pull操作，只是改变了noInbuf中data指针的值，并没有将实际数据拷贝一份，所以要做内容复制。
+			//在复制完数据前，需要保护nodeInbuf->data中的数据。然后将节点中的数据放入缓存节点数据区
+			//WaitForSingleObject(inQueNodeOut->mutex, INFINITE);
+			memcpy(dataOfInQueNodeOut, inQueNodeOut->data, inQueNodeOut->datalen * sizeOfInt32);
+			inQueNodeOut->data = dataOfInQueNodeOut;
+			//ReleaseMutex(inQueNodeOut->mutex);
+
+			if (isOutFirst)
 			{
-				//索引重置
-				index = 0;
-
-				if (!outRQue.isFull())
+				index += hjkdataf.waveDataFormat
+				(inQueNodeOut->data, (UCHAR*)outNode[outQIndex].data + index, inQueNodeOut->datalen, DAC_24BIT);
+				if (index == outNode[outQIndex].datalen * sizeOfInt32)
 				{
-					//写入时保护
-					outRQue.add(*nodeOut, false);
-
-					//ReleaseSemaphore(midNode2OutQSem, 1, NULL);//传入队列后，信号量+1
+					outNode[outQIndex].context = hjkBulkOutEndpt->BeginDataXfer(
+					(PUCHAR)outNode[outQIndex].data, xferUSBDataSize, &outNode[outQIndex].ovLap);
+					if (hjkBulkOutEndpt->NtStatus || hjkBulkOutEndpt->UsbdStatus) // BeginDataXfer failed
+					{
+						printf("Xfer request rejected.\n");
+						return;
+					}
+					/*if (!outRQue.add(outNode[outQIndex], false))
+						printf("Out queue first add node false.\n");*/
+					index = 0;
+					outQIndex++;
+					if (outQIndex == OUT_RQUEUE_LEN)
+					{
+						outQIndex = 0;
+						isOutFirst = false;
+					}
 				}
-				else
+			}
+			else
+			{
+				
+				if(index == 0)
+					xferOutBulkdataAsy(hjkBulkOutEndpt, (PUCHAR)outNode[outQIndex].data, xferUSBDataSize,
+						outNode[outQIndex].context, outNode[outQIndex].ovLap);
+
+			/*	while (outRQue.isFull());*/
+			//	WaitForSingleObject(outNode[outQIndex].mutex, INFINITE);
+				index += hjkdataf.waveDataFormat
+				(inQueNodeOut->data, (UCHAR*)outNode[outQIndex].data + index, inQueNodeOut->datalen, DAC_24BIT);
+				if (debugindex == 0)
+					t1 = GetTickCount();
+				debugindex++;
+				if (debugindex == 100000)
 				{
-					outRQue.add(*nodeOut, true);
-					cout << "Data out false." << endl;
-					//ReleaseSemaphore(midNode2OutQSem, 1, NULL);//传入队列后，信号量+1
-				//	printf("add nodeOut overwrite!\n");
+					t2 = GetTickCount();
+					printf("Average across time is %d ms per waveDataFormat.\n", (t2 - t1) / 1000);
+					debugindex = 0;
+				}
+				if (index == outNode[outQIndex].datalen * sizeOfInt32)
+				{
+					index = 0;
+					
+					outNode[outQIndex].context = hjkBulkOutEndpt->BeginDataXfer(
+					(PUCHAR)outNode[outQIndex].data, xferUSBDataSize, &outNode[outQIndex].ovLap);
+					if (hjkBulkOutEndpt->NtStatus || hjkBulkOutEndpt->UsbdStatus) // BeginDataXfer failed
+					{
+						printf("Xfer request rejected.\n");
+						return;
+					}
+
+				/*	if (!outRQue.add(outNode[outQIndex], false))
+						printf("Out queue add node false.\n");*/
+				//	ReleaseMutex(outNode[outQIndex].mutex);
+					outQIndex++;
+					if (outQIndex == OUT_RQUEUE_LEN)
+					{
+						outQIndex = 0;
+						isOutFirst = false;
+					}
 				}
 
 			}
 		}
 	}
+		
 }
+
  void  testOut(void *)
  {
 
 	 int i = 0;	
+	// HANDLE oMutex = CreateMutex(NULL, false, NULL);
+
 	 while (1)
 	 {
-		 if (!outRQue.isEmpty())//队列非空就pull
-		 {
-			 /**/
-			 if (outRQue.pull(nodeOutbuf))
-			 {				
-				 //usb异步传输
-				 nodeOutbuf->context = hjkBulkOutEndpt->BeginDataXfer(
-				 (PUCHAR)nodeOutbuf->data, xferUSBDataSize, &nodeOutbuf->ovLap);
-				 if (hjkBulkOutEndpt->NtStatus || hjkBulkOutEndpt->UsbdStatus) // BeginDataXfer failed
-				 {
-					 //Display(String::Concat("Xfer request rejected. NTSTATUS = ", EndPt->NtStatus.ToString("x")));
-				 //	AbortXferLoop(i + 1, buffers, isoPktInfos, contexts, inOvLap);
-					 return;
-				 }
+		 //if (isOutFirst && outRQue.isFull())
+		 //{
+			// for (outQIndex = 0; outQIndex < OUT_RQUEUE_LEN; outQIndex++)
+			// {
+			//	 outNode[outQIndex].context = hjkBulkOutEndpt->BeginDataXfer(
+			//		 (PUCHAR)outNode[outQIndex].data, xferUSBDataSize, &outNode[outQIndex].ovLap);
+			//	 if (hjkBulkOutEndpt->NtStatus || hjkBulkOutEndpt->UsbdStatus) // BeginDataXfer failed
+			//	 {
+			//		 //Display(String::Concat("Xfer request rejected. NTSTATUS = ", EndPt->NtStatus.ToString("x")));
+			//	 //	AbortXferLoop(i + 1, buffers, isoPktInfos, contexts, inOvLap);
+			//		 printf("Xfer request rejected.\n");
+			//		 return ;
+			//	 }
+			// }
+			// outQIndex = 0;
 
-				 if (!hjkBulkOutEndpt->WaitForXfer(&nodeOutbuf->ovLap, XFER_TIME_OUT))
-				 {
-					 hjkBulkOutEndpt->Abort();
-					 if (hjkBulkOutEndpt->LastError == ERROR_IO_PENDING)
-						 WaitForSingleObject(nodeOutbuf->ovLap.hEvent, 2000);
-				 }
-
-				 if (hjkBulkOutEndpt->FinishDataXfer(
-					 (UCHAR *)nodeOutbuf->data, xferUSBDataSize, &nodeOutbuf->ovLap, nodeOutbuf->context))
-				 {
-					 //debug
-					 /*
-					 xferIntNum += xferUSBDataSize / 4;
-
-					 if (xferIntNum % 1048576 == 0)
-					 {
-						 cout << "xferIntNum = " << xferIntNum << ",time is " << time(NULL) << endl;
-					 }
-					 */
-				 }
-
-
-				 //memcpy(outIntBuf, nodeOutbuf->data, nodeOutbuf->datalen*sizeOfInt32);
-
-				 //for (i = 0; i < nodeOutbuf->datalen; i+=sizeof(__int32))
-				 //	printf("nodeOutbuf data is %d\n", *(dacData *)(nodeOutbuf->data + i));
-			 //	if (hjkUdev.USBDevice->DeviceCount() > 0)
-				 //	usbxfer.xferDataToUSBEp(hjkUdev.USBDevice->BulkOutEndPt, nodeOutbuf->data, nodeOutbuf->datalen, hjkOutOvLap[outRQue.numElements()]);
-
+		 //}
+		 //
+		// if (!isOutFirst)
+		// {
+			 while (outRQue.isEmpty());
+			 //队列非空就pull
+			 if (outRQue.pull(outQueNodeOut))
+			 {
+				//  WaitForSingleObject(outQueNodeOut->mutex, INFINITE);
+				// xferOutBulkdataAsy(hjkBulkOutEndpt, (PUCHAR)outQueNodeOut->data, xferUSBDataSize,
+				//	 outQueNodeOut->context, outQueNodeOut->ovLap);
+				 //outQueNodeOut->context = hjkBulkOutEndpt->BeginDataXfer(
+				 //(PUCHAR)outQueNodeOut->data, xferUSBDataSize, &outQueNodeOut->ovLap);
+				 //if (hjkBulkOutEndpt->NtStatus || hjkBulkOutEndpt->UsbdStatus) // BeginDataXfer failed
+				 //{
+					// printf("Xfer request rejected.\n");
+					// return;
+				 //}
+				//  ReleaseMutex(outQueNodeOut->mutex);			 
 			 }
-		 }
+			 else
+				 printf("Out queue pull node false.\n");
+		 //}
+		 
+
 	 }
-	 //清理函数 
-
-	 abortXfer(OUT_RQUEUE_LEN);
+		//清理函数 
+		 abortXfer(OUT_RQUEUE_LEN);	 
  }
+ void dacDataToOutQue(UCHAR* dacDataBuf)
+ {
+	 while (outRQue.isFull())
+	 {
+		 //等待输出队列有空余空间
+	 }
+	 nodeOut = outRQue.getHead();	
+	 WaitForSingleObject(nodeOut->mutex, INFINITE);
+	 memcpy(nodeOut->data, dacDataBuf, xferUSBDataSize);	
+	 if(!outRQue.add(*nodeOut, false)) 
+		 printf("In queue add node false.\n");
+	 ReleaseMutex(nodeOut->mutex);
 
+ }
+ void dacDataToOutQueT(void *)
+ {
+	 while (1)
+	 {
+		 //初始化输出节点数据
+		 if (isOutFirst)
+		 {
+			 memcpy(outNode[outQIndex].data, dacDataBuf, outNode[inQIndex].datalen * sizeOfInt32);
+			 outQIndex++;
+		 }
+		 else 
+		 {
+			 while (outRQue.isFull())
+			 {
+				 //等待输出队列有空余空间
+			 }
+
+			 nodeOut = outRQue.getHead();
+			 WaitForSingleObject(nodeOut->mutex, INFINITE);
+			 // WaitForSingleObject(nodeOut->mutex, INFINITE);
+			 WaitForSingleObject(outbufMutex, INFINITE);
+			 memcpy(nodeOut->data, dacDataBuf, xferUSBDataSize);
+			 ReleaseMutex(outbufMutex);
+
+			 if (!outRQue.add(*nodeOut, false))
+				 printf("In queue add node false.\n");
+			 ReleaseMutex(nodeOut->mutex);
+		 }
+		
+			
+		 
+		 
+		// ReleaseMutex(nodeOut->mutex);
+			
+
+	 }
+	 
+
+ }
+ //usb bulk异步输出
+ bool xferOutBulkdataAsy(CCyBulkEndPoint *endPt, PUCHAR bufer, long xferSize, UCHAR * context,OVERLAPPED ovLap)
+ {
+	
+	
+	 if (!endPt->WaitForXfer(&ovLap, XFER_TIME_OUT))
+	 {
+		 endPt->Abort();
+		 if (endPt->LastError == ERROR_IO_PENDING)
+			 WaitForSingleObject(ovLap.hEvent, 2000);
+		 printf("WaitForXfer error.\n");
+	 }
+
+	 if (!endPt->FinishDataXfer(bufer, xferSize, &ovLap, context))
+	 {
+		 printf("FinishDataXfer error.\n");
+		 return false;
+	 }
+	 //context = endPt->BeginDataXfer(
+		// bufer, xferSize, &ovLap);
+	 //if (endPt->NtStatus || endPt->UsbdStatus) // BeginDataXfer failed
+	 //{
+		// //Display(String::Concat("Xfer request rejected. NTSTATUS = ", EndPt->NtStatus.ToString("x")));
+	 ////	AbortXferLoop(i + 1, buffers, isoPktInfos, contexts, inOvLap);
+		// return false;
+	 //}
+
+	 return true;
+ }
 
  void abortXfer(int pending)
  {
@@ -398,19 +569,63 @@ void initQueueBuf(int ch, int outBytes)
 
  }
 //输入为一次采样所有通道，且不用建立新的队列
- void dacDataIn(void *)
-{
-	while (1) 
-	{
 
-	
-		if (chNum > 0)
-		{
-			//nodeIn = (qnodeChInt32 *)inRQue.getHead();
-			nodeIn->datalen = chNum;
-			nodeIn->data = inData;
-			inRQue.add(*nodeIn);
-
-		}
-	}
-}
+ /*将输入队列中的数据处理后放入缓存*/
+ /*
+ void  toDacData(void*)
+ {
+	 UINT index = 0;
+	 UINT x = 0;
+	 UINT bufCur = 0;
+	 //UCHAR toDacBuf[CHARS_PER_DAC24_GROUP];
+	 while (1)
+	 {
+		 
+		 
+		 if (!inRQue.isEmpty())
+		 {
+			  inRQue.pull(nodeInbuf);//将入队队头的数据传入一个缓存
+			  
+			  //处理数据
+			  			
+			  hjkdataf.waveDataFormat(nodeInbuf, &outBuf[index][bufCur]);
+			  bufCur += CHARS_PER_DAC24_GROUP;
+			  if (bufCur >= xferUSBDataSize)
+			  {
+				  xferBuf(outBuf[index]);
+				  bufCur = 0;				  
+				  index++;
+				  if (index == OUT_RQUEUE_LEN)
+					  index = 0;
+			  }
+			 
+		 }
+		 else
+		 {
+		//等待超时，输出debug信息等，时间太长USB设备进入省电模式等其他操作	
+			
+			
+		 }
+	 }
+ }
+ */
+ bool xferBuf(PUCHAR buf)
+ {
+	 if (hjkBulkOutEndpt->XferData(buf, xferUSBDataSize))
+		 return true;
+ }
+ void debugThead(void*)
+ {
+	 nodeOutbuf->data = (int*)malloc(xferUSBDataSize);
+	 nodeOutbuf->datalen = xferUSBDataSize / sizeOfInt32;	 
+	 nodeOutbuf->ovLap.hEvent = CreateEvent(NULL, false, false, NULL);
+	 for (int i = 0; i < nodeOutbuf->datalen; i++)
+	 {
+		 if (i % 24 == 0)
+			 nodeOutbuf->data[i] = 0;
+		 else  nodeOutbuf->data[i] = 0xffffffff;
+	 }
+	 while(1)
+	 xferOutBulkdataAsy(hjkBulkOutEndpt, (PUCHAR)nodeOutbuf->data, xferUSBDataSize,
+		 nodeOutbuf->context, nodeOutbuf->ovLap);
+ }

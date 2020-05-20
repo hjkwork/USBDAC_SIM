@@ -6,6 +6,8 @@
 #define CHANLES_NUM 64
 #define DAC_BITS 32
 #define DAC_24BIT 24
+#define	DAC_32BIT 32
+#define CHARS_PER_DAC24_GROUP 192
 using namespace std;
 
 class HjkDataFormat
@@ -32,14 +34,19 @@ public:
 	 //
 	 UINT waveDataFormat(qnodeChInt32 * inNode, qnodeChInt32 * midNode, UINT index);
 	 UINT waveDataFormat(QUEUE_NODE_A * inNode, QUEUE_NODE_B * midNode, UINT index);
-	 /*
-	 dac数据输出前，需要按照dac的位数格式化输出数据，一是注意dac数据格式的大小端问题，
-	 二是，24位dac需要忽略8位数据.
-	 */
+	 UINT waveDataFormat(qnodeChInt32* inNode, UCHAR outbuf[CHARS_PER_DAC24_GROUP]);
+	 //inLen为整型长度。输入的bitwide只能是32、24和16；
+	 //返回输出大小
+	 UINT waveDataFormat(__int32* inBuf, UCHAR *outbuf, UINT inLen, UCHAR bitwide);
+	 
 	 
 	
 private:
 	UINT transpositionInt(__int32 *in, __int32 *out);
+	/*
+	 dac数据输出前，需要按照dac的位数格式化输出数据，一是注意dac数据格式的大小端问题，
+	 二是，24位dac需要忽略8位数据.
+	 */
 	void outDataFormat_64CH(qnodeChInt32 * in, qnodeChInt32* out, UCHAR bitWide);
 };
 
