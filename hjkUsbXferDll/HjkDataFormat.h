@@ -17,6 +17,7 @@ private:
 	QUEUE_NODE * midNode;
 	UINT index;
 	UINT method;
+	__int32* mutiChsBuf;
 	__int32 *oddGroup;
 	__int32 *evenGroup;
 	bool isFrist;

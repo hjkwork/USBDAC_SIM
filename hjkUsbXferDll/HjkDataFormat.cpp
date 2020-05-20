@@ -181,8 +181,9 @@ UINT HjkDataFormat::waveDataFormat(__int32* inBuf, UCHAR* outbuf, UINT inLen, UC
 	//此处导致输入通道数不能动态改变
 	if (isFrist)
 	{
-		oddGroup = (__int32*)malloc((inLen / 2) * sizeof(__int32));//设为0
-		evenGroup = (__int32*)malloc((inLen / 2) * sizeof(__int32));//设为0
+		mutiChsBuf = new __int32[inLen];
+		oddGroup = (__int32*)malloc((inLen / 2) * sizeof(__int32));
+		evenGroup = (__int32*)malloc((inLen / 2) * sizeof(__int32));
 		//outbuf = (UCHAR*)malloc(size_x);
 		isFrist = false;
 	}	
@@ -196,20 +197,20 @@ UINT HjkDataFormat::waveDataFormat(__int32* inBuf, UCHAR* outbuf, UINT inLen, UC
 		}
 
 		//转置
-		transpositionInt(oddGroup, inBuf);
-		transpositionInt(evenGroup, inBuf + (inLen / 2));
+		transpositionInt(oddGroup, mutiChsBuf);
+		transpositionInt(evenGroup, mutiChsBuf + (inLen / 2));
 		switch(bitwide)
 		{
 		case DAC_24BIT:
 			//将处理结果写入从index位置开始的midNode中
-			memcpy(outbuf, inBuf, size_x/2);
-			memcpy(outbuf + 24 * 4, inBuf + 32, size_x / 2);
+			memcpy(outbuf, mutiChsBuf, size_x/2);
+			memcpy(outbuf + 24 * 4, mutiChsBuf + 32, size_x / 2);
 			break;
 		case DAC_32BIT:
-			memcpy(outbuf, inBuf, size_x);			
+			memcpy(outbuf, mutiChsBuf, size_x);
 			break;
 		default:
-			memcpy(outbuf, inBuf, size_x);
+			memcpy(outbuf, mutiChsBuf, size_x);
 			size_x = inLen * 4;
 			break;
 

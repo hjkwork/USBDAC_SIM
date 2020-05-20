@@ -128,13 +128,13 @@ void xferToUSB(void *)
 	{
 		for (i = 0; i < 64; i++) {
 			//in[i] = ++dda;
-			//in[i] = 0x7fffffff * sin(x += 0.01);//(sin(x)*0x7fffffff)
-			in[i] = 0x7fffffff;
+			in[i] = 0x7fffffff * sin(x += 0.0001);//(sin(x)*0x7fffffff)
+			//in[i] = 0x7fffffff;
 		}
 		
-		queueBufStart(in, out,64,2048);
+		queueBufStart(in, out,64,64);
 		
-	// Sleep(1);
+	 Sleep(1);
 	
 		
 	}
