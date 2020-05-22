@@ -129,6 +129,7 @@ void xferToUSB(void *)
 	std::cout << "Data producing and xfer data to usb device..." << endl;
 	while (1)
 	{
+		
 		for (i = 0; i < 64; i++) {
 			//in[i] = ++dda;
 			in[i] = 0x7fffffff * sin(x += 0.00001);//(sin(x)*0x7fffffff)
@@ -136,9 +137,9 @@ void xferToUSB(void *)
 		}
 		
 		queueBufStart(in, out,64,64);
-		for (int t = 0; t < delay; t++)
-			for (int j = 0; j < delay; j++);
-	// Sleep(1);
+		/*for (int t = 0; t < delay; t++)
+			for (int j = 0; j < delay; j++);*/
+	Sleep(1);
 
 	
 		

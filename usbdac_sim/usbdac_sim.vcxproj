@@ -92,6 +92,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\dllclient\dllclient.cpp" />
     <ClCompile Include="HjkDataDefine.cpp" />
     <ClCompile Include="HjkDataFormat.cpp" />
     <ClCompile Include="HjkRingBuf.cpp" />
