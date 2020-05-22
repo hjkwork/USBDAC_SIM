@@ -9,6 +9,7 @@
 #define OUT_RQUEUE_LEN	16
 #define XFER_TIME_OUT	2000
 #define XFER_SIZE_SCALE  4
+#define IN_BUF_LEN  64
 
 //int32 in func
 //extern "C" HJKUSBXFERDLL_API void  initQueueBuf(int ch,int outBytes);

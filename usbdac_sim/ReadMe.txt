@@ -119,5 +119,24 @@ usb设备的c++操作
 定时输出缓存中的一部分数据。
 /***********0520***********/
 去除了循环队列模式，套用了2018年6月的程序方法
+应用程序发送方法
+获取传入数组pDataIn的指针和传入的大小（输入为32为整型，目前通道固定为64），
+初始化usb设备和缓存区outBufs，缓存区由putBufsLen个缓存块构成，每个缓存块的大小为xferUSBDataSize（其值为usb端点包最大字节*通道数*3）。
+按照dac分析的数据格式转换pDataIn所指的一组数据。并填满一个缓存块outBufs[outBufsIndex].
+usb设备每次发送xferUSBDataSize个字节数据，并采用异步发送发式。
+1.初始时，缓存区outBufs中的数据填满后，outBufsLen个内的数据一起发送出去。并设置outBufsIndex=0；
+2.然后等待并结束数据块outBufs[outBufsIndex]内数据发送完,
+3.处理输入数据直到填满outBufs[outBufsIndex]，然后发送。
+4.outBufsIndex++，如果outBufsIndex=outBufsLen，则outBufsIndex，否则转到2。
+    对于usb异步发送来说，整个outBufs填一遍数据的时间tw，这个时间必须大于向usb设备发送一次数据并完成发送的耗时。如此数据流才会连续不中断，对于usbdac设备来说，数据中断会导致输出归0，波形突然中断（若通过固件进行旧数据保持，如果中断时间太长，dac输出波形就不够平滑）。
+    关于缓存区大小的计算：
+    若dac的采样率为f（实例为8/96Mhz），每dg（实例192）个字节采样一次，应用程序每次向usb设备发送xferUSBDataSize字节，应用程序产生xferUSBDataSize个字节需要时间为tx.其中，usb设备发送一次数据并完成发送的耗时
+    ts = （xferUSBDataSize/dg）/f
+    需要满足
+    tw = tx*outBufsLen > ts
+    那么 outBufsLen >xferUSBDataSize/(dg*f*tx)
+
+
+
 
 

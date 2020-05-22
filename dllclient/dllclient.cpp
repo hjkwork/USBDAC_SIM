@@ -123,18 +123,23 @@ void xferToUSB(void *)
 	__int32 in[64];
 	__int32 out[512];
 //	startHjkUSBdevice()
+	int delay = 200;
+	int f = 500;
+	double pi = 3.141592654;
 	std::cout << "Data producing and xfer data to usb device..." << endl;
 	while (1)
 	{
 		for (i = 0; i < 64; i++) {
 			//in[i] = ++dda;
-			in[i] = 0x7fffffff * sin(x += 0.0001);//(sin(x)*0x7fffffff)
+			in[i] = 0x7fffffff * sin(x += 0.00001);//(sin(x)*0x7fffffff)
 			//in[i] = 0x7fffffff;
 		}
 		
 		queueBufStart(in, out,64,64);
-		
-	 Sleep(1);
+		for (int t = 0; t < delay; t++)
+			for (int j = 0; j < delay; j++);
+	// Sleep(1);
+
 	
 		
 	}

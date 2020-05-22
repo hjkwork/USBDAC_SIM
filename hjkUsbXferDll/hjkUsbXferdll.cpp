@@ -46,6 +46,11 @@ static HANDLE									outbufMutex = CreateMutex(NULL, false, NULL);
 //在填充一个节点的时候不能pull；
 static	UINT										inQIndex;//计数
 static	UINT										outQIndex;
+
+//数据输入缓存相关
+static __int32** inBufs;
+static UINT inBufsLen;
+static UINT	inBufsIndex;
 //usb相关
 static string									hjkUSBdevices;
 static HjkUSBDevice								hjkUSB;
@@ -175,6 +180,9 @@ void initQueueBuf(int ch, int queueSize)
 
 	//2.初始化节点缓存
 	//*inNode = new qnodeChInt32;
+
+	
+
 	
 
 	inQueNodeOut = new qnodeChInt32;
@@ -191,7 +199,13 @@ void initQueueBuf(int ch, int queueSize)
 	nodeOutbuf = new qnodeChInt32;
 
 
-	//1.初始化输入节点
+	//1.初始化输入
+
+	
+	inBufsLen = IN_BUF_LEN;
+	inBufsIndex = 0;
+	inBufs = new __int32 *[inBufsLen];
+
 	for (inQIndex = 0; inQIndex < IN_RQUEUE_LEN; inQIndex++)
 	{
 		//datalen一般为通道数
@@ -210,10 +224,14 @@ void initQueueBuf(int ch, int queueSize)
 	contexts = new PUCHAR[outBufsLen];
 	inOvLap = new OVERLAPPED[outBufsLen];
 	
+	dataInMutex = CreateMutex(NULL, false, NULL);
 	/*mutiChsBuf = new __int32[chNum];
 	oddSetBuf = new __int32[chNum /2];
 	evenSetBuf = new __int32[chNum /2];*/
-
+	haveInit = true;
+	isInFirst = true;
+	isOutFirst = true;
+	isXfer = true;
 
 	//_beginthread(testIn, 0, NULL);
 	//_beginthread(testFormat, 0, NULL);
@@ -222,17 +240,16 @@ void initQueueBuf(int ch, int queueSize)
 	_beginthread(toDacData, 0, NULL);
 	
 	//_beginthread(debugThead, 0, NULL);
-	haveInit = true;
-	isInFirst = true;
-	isOutFirst = true;
-	isXfer = true;
+	
 }
 //必须首先设置通道数
 //allChIn1是输入的地址，ch是出入到32位int数据的个数（一个节点的int个数），
 //out是输出地址，outBytes是输出（一个节点）的字节数
  void queueBufStart(__int32 *allChIn1,__int32 *out, int ch, int outQueSize)
 {
+	 WaitForSingleObject(dataInMutex, 100);
 	 pDataIn = allChIn1;
+	 ReleaseMutex(dataInMutex);
 	 if (!haveInit)
 	 {
 		initQueueBuf(ch, outQueSize);
@@ -550,8 +567,10 @@ void initQueueBuf(int ch, int queueSize)
 		 {
 			 //处理过程中，输入数据的内容不能变。同步问题,考虑同步方法，或检测出来
 			 //pTstIn = pDataIn;
-			 memcpy(dataInBuf, pDataIn, chNum * sizeOfInt32);
-			 index += hjkdataf.waveDataFormat(dataInBuf, outBufs[outBufsIndex] + index,chNum , DAC_24BIT);
+			 //memcpy(dataInBuf, pDataIn, chNum * sizeOfInt32);
+			 WaitForSingleObject(dataInMutex, 100);
+			 index += hjkdataf.waveDataFormat(pDataIn, outBufs[outBufsIndex] + index,chNum , DAC_24BIT);
+			 ReleaseMutex(dataInMutex);
 			 //输出后检查是否改变
 			//
 
@@ -605,8 +624,10 @@ void initQueueBuf(int ch, int queueSize)
 		 while (index < xferUSBDataSize)//填满一次发送的数据
 		 {
 			 // 处理过程中，输入数据的内容不能变。同步问题, 考虑同步方法，或检测出来
-			 memcpy(dataInBuf, pDataIn, chNum * sizeOfInt32);
-			 index += hjkdataf.waveDataFormat(dataInBuf, outBufs[outBufsIndex] + index, chNum, DAC_24BIT);
+			// memcpy(dataInBuf, pDataIn, chNum * sizeOfInt32);			 
+			 WaitForSingleObject(dataInMutex, 100);
+			 index += hjkdataf.waveDataFormat(pDataIn, outBufs[outBufsIndex] + index, chNum, DAC_24BIT);
+			 ReleaseMutex(dataInMutex);
 		 }
 
 
@@ -644,4 +665,28 @@ void initQueueBuf(int ch, int queueSize)
 	 while(1)
 	 xferOutBulkdataAsy(hjkBulkOutEndpt, (PUCHAR)nodeOutbuf->data, xferUSBDataSize,
 		 nodeOutbuf->context, nodeOutbuf->ovLap);
+ }
+ void dataIn(void*)
+ {
+	 UINT index = 0;
+	 __int32* pTstIn;
+	 //输入缓存初始化
+	 for (inBufsIndex = 0; inBufsIndex < inBufsLen; inBufsIndex++)
+	 {
+		 inBufs[inBufsIndex] = new __int32[chNum];	
+		 //构建inBufsIndex个线程等待处理输入数据
+		 //此处bug，注意互斥访问
+		 memcpy(inBufs[inBufsIndex], pDataIn, chNum * sizeof(__int32));
+	 }
+	 //第一次发送
+	 for (inBufsIndex = 0; inBufsIndex < inBufsLen; inBufsIndex++)
+	 {
+		 //依次启动线程处理数据
+	 }
+
+	 inBufsIndex = 0;
+	 while (1)
+	 {
+		 //循环处理
+	 }
  }
